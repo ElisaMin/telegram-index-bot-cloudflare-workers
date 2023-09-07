@@ -3,13 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "deploy": "wrangler publish",
-    "start": "wrangler dev"
+    "deploy": "wrangler publish  -e development",
+    "start": "wrangler dev -e development"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20230419.0",
-    "typescript": "^5.0.4",
-    "wrangler": "^3.0.0",
-    "telegraf": "^4.12.2"
+    "typescript": "^5.0.4"
   }
 }

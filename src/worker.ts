@@ -1,32 +1,53 @@
-/**
- * Welcome to Cloudflare Workers! This is your first worker.
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Open a browser tab at http://localhost:8787/ to see your worker in action
- * - Run `npm run deploy` to publish your worker
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
+import { BotConfig } from './bot/types';
+import { handle } from './bot/request';
+
+declare global {
+
+	export interface Object {
+		transform<T, R>(block: (obj: T) => R): R;
+	}
+	export interface String {
+		empty(): boolean
+		blank(): boolean
+	}
+	let bots: BotConfig[]|undefined;
+}
+
+
+Object.prototype.transform = function<T, R>(this: T, block: (obj: T) => R): R {
+	return block(this);
+};
+String.prototype.empty = function(this: string): boolean {
+	return this.length == 0;
+}
+String.prototype.blank = function(this: string): boolean {
+	return this.trim().empty();
+}
+
+
 
 export interface Env {
-	// Example binding to KV. Learn more at https://developers.cloudflare.com/workers/runtime-apis/kv/
-	// MY_KV_NAMESPACE: KVNamespace;
-	//
-	// Example binding to Durable Object. Learn more at https://developers.cloudflare.com/workers/runtime-apis/durable-objects/
-	// MY_DURABLE_OBJECT: DurableObjectNamespace;
-	//
-	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
-	// MY_BUCKET: R2Bucket;
-	//
-	// Example binding to a Service. Learn more at https://developers.cloudflare.com/workers/runtime-apis/service-bindings/
-	// MY_SERVICE: Fetcher;
-	//
-	// Example binding to a Queue. Learn more at https://developers.cloudflare.com/queues/javascript-apis/
-	// MY_QUEUE: Queue;
+	dataDB:D1Database
+	bots:BotConfig[]
+	urlPattern:string
+	apiUrl:string
+	webhookUrl:string
 }
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		return new Response('Hello World!');
-	},
+		//region init block
+		bots = env.bots
+		if (!env.urlPattern || env.urlPattern.empty()) {
+			env.urlPattern = "/bot/([a-zA-Z0-9]+)/.+"
+		}
+		if (!env.apiUrl || env.apiUrl.empty()) {
+			env.apiUrl = "https://api.telegram.org/bot"
+		}
+		//endregion
+		return  await handle(request, env)
+	}
 };
+export function emptyResponse() {
+	return new Response('',{status:500})
+}
