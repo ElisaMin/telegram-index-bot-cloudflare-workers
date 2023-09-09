@@ -23,7 +23,12 @@ String.prototype.empty = function(this: string): boolean {
 String.prototype.blank = function(this: string): boolean {
 	return this.trim().empty();
 }
-
+export class UnexpectedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "UnexpectedError";
+	}
+}
 
 
 export interface Env {
@@ -32,6 +37,7 @@ export interface Env {
 	urlPattern:string
 	apiUrl:string
 	webhookUrl:string
+	reviewerChatId?:number
 }
 
 export default {
@@ -43,6 +49,13 @@ export default {
 		}
 		if (!env.apiUrl || env.apiUrl.empty()) {
 			env.apiUrl = "https://api.telegram.org/bot"
+		}
+		if (env.reviewerChatId) {
+			bots = bots.map(bot => {
+				if (!bot.reviewerChatId)
+				bot.reviewerChatId = env.reviewerChatId
+				return bot
+			})
 		}
 		//endregion
 		return  await handle(request, env)
