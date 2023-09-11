@@ -4,3 +4,6 @@ node_modules
 # cloudflare worker
 wrangler.toml
 package-lock.json
+
+# idea
+.idea/
