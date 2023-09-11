@@ -7,13 +7,83 @@ import {
    ReplyForUpdateContext, ReplyScope,
    UpdateHandler
 } from './contexts_type';
-import { CallbackQuery, Chat, ChatType, Message, Update, User } from '../telegram/types';
-import { TelegramBotApi } from '../telegram/api';
+import { CallbackQuery, Chat, ChatType, Message, Update } from '../telegram/types';
+import { ParseMode, TelegramBotApi } from '../telegram/api';
 import { AwaitInfo, DatabaseAlisObject, Enrol } from '../db/types';
 import { Rejecting } from '../db/ban';
-import { UnexpectedError } from '../worker';
+import { TODO, UnexpectedError } from '../worker';
 import { BotConfig } from '../bot/types';
-import { custom_reply, CustomReply } from './custom_reply';
+import { CustomReply } from './custom_reply';
+
+export namespace Handler {
+
+   let handler: UpdateHandler | undefined = undefined;
+   let toDev: (_?: string, __?: Error) => Promise<void> = async (_?:string, __?:Error)=>{
+      throw new UnexpectedError("Dev chat id is not set")
+   }
+
+   export async function init(update: Update, api: TelegramBotApi, dao: DatabaseAlisObject, botConfig: BotConfig) {
+      if (!handler) {
+         const _handler = new UpdateHandlerImpl(update,api,dao,botConfig)
+         await _handler.task
+         handler = _handler
+      }
+      toDev = async (s?:string,e?:Error)=>{
+         let chatId = botConfig.devChatId ?? botConfig.reviewerChatId
+         if (!chatId) throw new UnexpectedError("Dev chat id is not set")
+         let text = `**ERROR!**\n*reason:* \`${s}\`\nupdate:\n\`\`\`\n${JSON.stringify(update)}\n\`\`\`\nstack:\n\`\`\`\n${e?.stack}\n\`\`\``
+         try {
+            await api.sendMessage({
+               chat_id:chatId,
+               text:text,
+               parse_mode:ParseMode.Markdown
+            })
+            chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id
+            if (chatId) {
+               await api.sendMessage({
+                  chat_id:chatId,
+                  text:"这个操作出了点问题，已经通知开发者了，抱歉！",
+                  parse_mode:ParseMode.Markdown
+               })
+            }
+         } catch (e) {
+            console.error(e)
+            console.error(text)
+         }
+      }
+   }
+
+   export async function use(f:(handler:UpdateHandler)=>UpdateHandler) {
+      if (!handler) throw new UnexpectedError("Handler is not set")
+      handler = f(handler)
+   }
+   export async function collect() {
+      TODO()
+   }
+
+   export async function invoke() {
+      try {
+         if (!handler||handler !instanceof UpdateHandlerImpl) {
+            // noinspection ExceptionCaughtLocallyJS
+            throw new UnexpectedError("Handler is not set")
+         }
+         const _handler = <UpdateHandlerImpl> handler
+         if (!_handler.final) {
+            // noinspection ExceptionCaughtLocallyJS
+            throw new UnexpectedError("Handler is not set")
+         }
+         await _handler.final();
+
+      } catch (e) {
+         if (e instanceof  UnexpectedError) {
+            await toDev(e.message,e)
+         } else {
+            console.error(e)
+            await toDev("Unknown error",e as Error)
+         }
+      }
+   }
+}
 
 namespace ContextImpl {
    /**
@@ -23,7 +93,7 @@ namespace ContextImpl {
       actor: ActorType;
       api: TelegramBotApi;
       chatId: number;
-      db: DatabaseAlisObject;
+      dao: DatabaseAlisObject;
       isForReviewers: boolean;
       customReply: CustomReply;
       constructor(
@@ -32,7 +102,7 @@ namespace ContextImpl {
          this.api = base.api
          this.actor = base.actor
          this.chatId = base.chatId
-         this.db = base.db
+         this.dao = base.dao
          this.isForReviewers = base.isForReviewers
          this.customReply = base.customReply
       }
@@ -54,21 +124,21 @@ namespace ContextImpl {
       protected readonly paths: string[]
       private readonly uuid?:string
       enrol?: Enrol
-      constructor(
+      protected constructor(
          base: BaseContext,
          public readonly data: string,
          readonly index: number = 0,
          enrol?: Enrol,
       ) {
          super(base);
-         let enrolAndData = data.split("#")
-         let path:string|undefined = enrolAndData.shift()
+         let pathsEnrol = data.split("#")
+         let path:string|undefined = pathsEnrol.shift()
          if (path) {
             this.paths = path.split("/")
          } else {
             throw new UnexpectedError("Path is not set")
          }
-         this.uuid = enrolAndData?.shift()
+         this.uuid = pathsEnrol?.shift()
          if (enrol)
             this.enrol = enrol
       }
@@ -76,13 +146,21 @@ namespace ContextImpl {
          if (this.enrol) return this.enrol
          const uuid = this.uuid
          if (!uuid) return undefined
-         this.enrol = await this.db.findEnrolByUUID(uuid)
+         this.enrol = await this.dao.findEnrolByUUID(uuid)
          return this.enrol
       }
-      get nextPath() {
+      get afterPath() {
          return this.paths[this.index]
       }
-      protected _nextPath:string = this.nextPath
+      get overPath() {
+         return this.paths[this.index+1]
+      }
+      private shifted = 0
+      shift() {
+         this.shifted++
+         return this.paths[this.index+this.shifted]
+      }
+      protected _nextPath:string = this.afterPath
       protected abstract getNextContext():S
       public next(path:string, callback: (scope: S) => void): S {
          if (this._nextPath == path) {
@@ -101,6 +179,7 @@ namespace ContextImpl {
          public readonly data: string,
          public readonly messageId: number,
          public readonly callbackId: string,
+         public readonly chatType: ChatType,
          public readonly index: number = 0,
          enrol?: Enrol,
       ) {
@@ -116,7 +195,7 @@ namespace ContextImpl {
          return this._nextPath.split("?")[1]
       }
       protected getNextContext() {
-         return new Callback(this,this.data,this.messageId,this.callbackId,this.index+1)
+         return new Callback(this,this.data,this.messageId,this.callbackId,this.chatType,this.index+1)
       }
    }
    export class Reply extends PathContext<ReplyScope> implements ReplyForUpdateContext {
@@ -139,6 +218,7 @@ namespace ContextImpl {
    }
 
 }
+
 
 class UpdateHandlerImpl implements UpdateHandler {
    private context:BaseContext|undefined
@@ -209,12 +289,13 @@ class UpdateHandlerImpl implements UpdateHandler {
             }
       }
       return {
-         actor: actor, chatId: chat.id, db: this.dao,
+         actor: actor, chatId: chat.id, dao: this.dao,
          isForReviewers: actor == ActorType.Reviewer,
          api: this.api,customReply:this.botConfig.customReply
       }
    }
 
+   //region make context
    private async makeCommandContext(message: Message) {
       if (this.context) return
       const me = await this.api.getMe()
@@ -240,7 +321,7 @@ class UpdateHandlerImpl implements UpdateHandler {
       if (!message.chat) throw new UnexpectedError("Chat is not set")
       if (!callback_query.data) throw new UnexpectedError("Data is not set")
 
-      const context = new ContextImpl.Callback(this.makeBaseContext(message.chat),callback_query.data,callback_query.message?.message_id??0,callback_query.id)
+      const context = new ContextImpl.Callback(this.makeBaseContext(message.chat),callback_query.data,callback_query.message?.message_id??0,callback_query.id,message.chat.type)
 
       await context.checkEnrolInDatabase()
       this.context = context
@@ -262,18 +343,19 @@ class UpdateHandlerImpl implements UpdateHandler {
    private makeRejectContext() {
       this.context = new RejectedContextImpl()
    }
+   //endregion
 
-   private final?:()=>void
+   final?:()=>Promise<void>
 
    answerCallback(first: string, f: (c: ChatSelector<CallbackContext>) => ChatSelector<CallbackContext>): UpdateHandler {
       if (!this.final && this.context instanceof ContextImpl.Callback) {
-         if (first == this.context.nextPath) {
+         if (first == this.context.afterPath) {
             const selector = new ChatSelectorImpl<CallbackContext>(this.context.actor)
             f(selector)
             const context = this.context
             const invokable = selector.invoke()
-            this.final = ()=>{
-               invokable(context)
+            this.final = async ()=>{
+               await invokable(context)
             }
          }
       }
@@ -287,8 +369,8 @@ class UpdateHandlerImpl implements UpdateHandler {
             f(selector)
             const context = this.context
             const invokable = selector.invoke()
-            this.final = ()=>{
-               invokable(context)
+            this.final = async ()=>{
+               await invokable(context)
             }
          }
       }
@@ -297,13 +379,13 @@ class UpdateHandlerImpl implements UpdateHandler {
 
    replyForUpdate(first: string, f: (c: ChatSelector<ReplyForUpdateContext>) => ChatSelector<ReplyForUpdateContext>): UpdateHandler {
       if (!this.final && this.context instanceof ContextImpl.Reply) {
-         if (first == this.context.nextPath) {
+         if (first == this.context.afterPath) {
             const selector = new ChatSelectorImpl<ReplyForUpdateContext>(this.context.actor)
             f(selector)
             const context = this.context
             const invokable = selector.invoke()
-            this.final = ()=>{
-               invokable(context)
+            this.final = async ()=>{
+              await invokable(context)
             }
          }
       }
@@ -312,79 +394,91 @@ class UpdateHandlerImpl implements UpdateHandler {
 
    onRejected(f: (c: ChatSelector<CommandContext>) => ChatSelector<CommandContext>): UpdateHandler {
       //TODO
-      throw new Error("Method not implemented.");
+      TODO()
    }
 }
 
 class ChatSelectorImpl<S extends BaseContext> implements ChatSelector<S>{
-   protected chain:Array<(context:S)=>void> = []
-   constructor(protected typeSelecting:ActorType,) {
+   protected chain:Array<(context:S)=>Promise<unknown>> = []
+   private addedTypes = new Set<ActorType>()
+   constructor(protected typeSelecting:ActorType,) {}
 
-   }
-   privateChat(f:(context:S)=>void):ChatSelector<S>{
-       if (ActorType.Private == this.typeSelecting) {
-         this.chain.push(f)
-       }
-      return this
-   }
-   groupChat(f:(context:S)=>void):ChatSelector<S> {
-      if (ActorType.Group == this.typeSelecting) {
+   private selecting(type:ActorType,f:(context:S)=>Promise<unknown>) {
+      if (type == this.typeSelecting) {
          this.chain.push(f)
       }
+      this.addedTypes.add(type)
       return this
    }
-   reviewerChat(f:(context:S)=>void):ChatSelector<S> {
-      if (ActorType.Reviewer == this.typeSelecting) {
-         this.chain.push(f)
-      }
+   privateChat(f:(context:S)=>Promise<unknown>):ChatSelector<S>{
+      this.selecting(ActorType.Private,f)
       return this
    }
-   anyways(f:(context:S)=>void):ChatSelector<S> {
+   groupChat(f:(context:S)=>Promise<unknown>):ChatSelector<S> {
+      this.selecting(ActorType.Group,f)
+      return this
+   }
+   reviewerChat(f:(context:S)=>Promise<unknown>):ChatSelector<S> {
+      this.selecting(ActorType.Reviewer,f)
+      return this
+   }
+   anyways(f:(context:S)=>Promise<unknown>):ChatSelector<S> {
       this.chain.push(f)
       return this
    }
-   multipleChats(f:(context:S)=>void,...not:ActorType[]):ChatSelector<S>  {
-      const isPush = [ActorType.Private,ActorType.Group,ActorType.Reviewer]
-         .filter(t=>!not.includes(t)) //selected
-         .includes(this.typeSelecting)
-      if (isPush) {
+   multipleChats(not:ActorType[],f:(context:S)=>Promise<unknown>):ChatSelector<S>  {
+      [ActorType.Private, ActorType.Group, ActorType.Reviewer]
+
+         .filter((type)=> !not.includes(type))
+
+         .forEach(t=>this.selecting(t,f))
+
+      return this
+   }
+   disableRest(only?:ActorType):ChatSelector<S>  {
+      if (!this.addedTypes.has(this.typeSelecting)) {
+         let key:string|undefined
+         switch (only) {
+            case ActorType.Reviewer:
+            case undefined:
+               key = "disable"
+               break
+            case ActorType.Private:
+               key = "onlyPrivate"
+               break
+            case ActorType.Group:
+               key = "onlyGroup"
+               break
+            default:
+               throw new UnexpectedError("Unknown actor type")
+         }
+         this.chain.push(async (context:S)=> {
+            if (!key ) throw new UnexpectedError("cant find key of disabling")
+            const message = (<any>context.customReply)[key]
+            if (!message) throw new UnexpectedError("cant find message of disabling")
+            await context.api.sendMessage({
+               chat_id:context.chatId,
+               text:message,
+            })
+         })
+      }
+      return this
+   }
+   otherwise(f:(context:S)=>Promise<unknown>) {
+      if (!this.addedTypes.has(this.typeSelecting)) {
          this.chain.push(f)
       }
       return this
    }
-   disableRest(only?:ActorType):ChatSelector<S>  {
-      let message:string|undefined
-      switch (only) {
-         case undefined:
-            message = custom_reply.disable
-            break
-         case ActorType.Private:
-            message = custom_reply.onlyPrivate
-            break
-         case ActorType.Group:
-            message = custom_reply.onlyGroup
-            break
-         default:
-            throw new UnexpectedError("Reviewer is not supported")
+
+   invoke() {
+       return async (c:S) => {
+         for (const f of this.chain) {
+            await f(c);
+         }
       }
-      this.chain.push(async (context:S)=>{
-         if (!message ) throw new UnexpectedError("Message is not set")
-         await context.api.sendMessage({
-            chat_id:context.chatId,
-            text:message,
-            reply_markup:{
-               remove_keyboard:true
-            }
-         })
-      })
-      return this
    }
 
-   invoke(){
-       return (c:S) => {
-         this.chain.forEach(f=>f(c))
-      }
-   }
 }
 //TODO
 class RejectedContextImpl implements BaseContext {
@@ -395,7 +489,7 @@ class RejectedContextImpl implements BaseContext {
    get chatId(): number {
        throw new Error("Method not implemented.");
    }
-   get db(): DatabaseAlisObject {
+   get dao(): DatabaseAlisObject {
        throw new Error("Method not implemented.");
    }
    get isForReviewers(): boolean {

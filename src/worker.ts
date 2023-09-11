@@ -64,3 +64,13 @@ export default {
 export function emptyResponse() {
 	return new Response('',{status:500})
 }
+
+export function TODO():never {
+	throw new NotImplementedException("TODO")
+}
+class NotImplementedException extends Error {
+	constructor(message: string = "Not implemented") {
+		super(message);
+		this.name = "NotImplementedException";
+	}
+}

@@ -37,14 +37,14 @@ type SendChatAction = Api<boolean> & {
   action:"typing"|"upload_document"
 }
 
-enum ParseMode {
+export enum ParseMode {
   Markdown = "Markdown",
   HTML = "HTML"
 }
 export type SendMessage = Api<Message> & {
   chat_id:number|string
   text:string
-  parse_mode?:ParseMode
+  parse_mode?:ParseMode|"HTML"|"MarkdownV2"|"Markdown"
   disable_web_page_preview?:boolean
   disable_notification?:boolean
   reply_to_message_id?:number

@@ -45,6 +45,9 @@ export interface DatabaseAlisObject {
     searchEnrolsByCategory(keyword: string): Promise<Enrols | null>;
     // score(): number;
    getAwaitStatus(chatId: number): Promise<AwaitInfo | null>;
+   checkCategory(next: string): Promise<Boolean>;
+
+    updateCategory(uuid: string, next: string): Promise<boolean>;
 }
 export interface AwaitInfo {
     chat_id: number

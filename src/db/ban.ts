@@ -60,6 +60,8 @@
  * ```
  */
 
+import { TODO } from '../worker';
+
 /**
  * 具绝请求数据类型
  *
@@ -88,6 +90,6 @@ type Reject = {
 }
 export namespace Rejecting {
   export async function checkDeserving(chat_id: number, ):Promise<boolean> {
-    throw new Error('Not implemented');
+    TODO()
   }
 }

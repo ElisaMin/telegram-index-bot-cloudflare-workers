@@ -1,6 +1,7 @@
 import { TelegramBotApi } from '../telegram/api';
 import { DatabaseAlisObject, Enrol } from '../db/types';
 import { CustomReply } from './custom_reply';
+import { ChatType } from '../telegram/types';
 
 
 
@@ -9,7 +10,7 @@ export interface BaseContext {
    actor:ActorType
    api:TelegramBotApi
    isForReviewers:boolean
-   db:DatabaseAlisObject
+   dao:DatabaseAlisObject
    customReply:CustomReply
 
 }
@@ -27,16 +28,29 @@ export interface CommandContext extends BaseContext {
 export interface ReplyForUpdateContext extends BaseContext,ReplyScope { }
 
 export interface CallbackContext extends BaseContext,CallbackScope {
-  messageId:number
-  callbackId:string
-  answerCallback():Promise<CallbackScope>
+   messageId:number
+   callbackId:string
+   chatType:ChatType
+   answerCallback():Promise<CallbackScope>
 }
 
 export interface CallbackScope {
-  data?:string
-  enrol?: Enrol
-  next(path?: string, callbackScope?: (scope:CallbackScope)=>void):void
-  param():string | undefined
+   data?:string
+   enrol?: Enrol
+   shift():string | undefined
+   /**
+    * /foo/bar/baz can be use by next function
+    * ```
+    * next(foo,{ afterPath:"bar",overPath:"baz" } =>...)
+    * ```
+    */
+   afterPath?:string
+   /**
+    * @see afterPath
+    */
+   overPath?:string
+   next(path?: string, callbackScope?: (scope:CallbackScope)=>void):CallbackScope
+   param():string | undefined
 }
 export interface ReplyScope {
     data?:string
@@ -50,12 +64,13 @@ export interface ReplyScope {
 }
 
 export interface ChatSelector<C extends BaseContext> {
-  privateChat(f:(context:C)=>void):ChatSelector<C>,
-  groupChat(f:(context:C)=>void):ChatSelector<C>,
-  reviewerChat(f:(context:C)=>void):ChatSelector<C>,
-  multipleChats(f:(context:C)=>void,...not:ActorType[]):ChatSelector<C>,
-  anyways(f:(context:C)=>void):ChatSelector<C>,
-  disableRest(only?:ActorType):ChatSelector<C>,
+   privateChat(f:(context:C)=>Promise<unknown>):ChatSelector<C>,
+   groupChat(f:(context:C)=>Promise<unknown>):ChatSelector<C>,
+   reviewerChat(f:(context:C)=>Promise<unknown>):ChatSelector<C>,
+   multipleChats(not:ActorType[],f:(context:C)=>Promise<unknown>):ChatSelector<C>,
+   anyways(f:(context:C)=>Promise<unknown>):ChatSelector<C>,
+   disableRest(only?:ActorType):ChatSelector<C>,
+   otherwise(f:(context:C)=>Promise<unknown>):ChatSelector<C>,
 }
 export enum ActorType {
   Private = "private",
