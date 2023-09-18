@@ -21,6 +21,12 @@ export class TelegramBotApi extends ApiBaseRequestWrapper {
   answerCallbackQuery(body:AnswerCallbackQuery):Promise<boolean> {
     return this.post("/answerCallbackQuery",body)
   }
+  editMessageText(body:EditMessageText):Promise<Message> {
+      return this.post("/editMessageText",body)
+  }
+   editMessageReplyMarkup(body:EditMessageReplyMarkup):Promise<Message> {
+      return this.post("/editMessageReplyMarkup",body)
+   }
 
 }
 export type Api<R> = {

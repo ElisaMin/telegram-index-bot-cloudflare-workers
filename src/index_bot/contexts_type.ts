@@ -12,13 +12,13 @@ export interface BaseContext {
    isForReviewers:boolean
    dao:DatabaseAlisObject
    customReply:CustomReply
-
 }
 export interface UpdateHandler {
    command(command:string,f:(c:ChatSelector<CommandContext>)=>ChatSelector<CommandContext>):UpdateHandler,
    replyForUpdate(first:string,f:(c:ChatSelector<ReplyForUpdateContext>)=>ChatSelector<ReplyForUpdateContext>):UpdateHandler,
    answerCallback(first:string, f:(c:ChatSelector<CallbackContext>)=>ChatSelector<CallbackContext>):UpdateHandler,
    onRejected(f:(c:ChatSelector<CommandContext>)=>ChatSelector<CommandContext>):UpdateHandler,
+   // anyways(f:()=>void):UpdateHandler,
 }
 
 export interface CommandContext extends BaseContext {
@@ -53,12 +53,18 @@ export interface CallbackScope {
    param():string | undefined
 }
 export interface ReplyScope {
-    data?:string
-    enrol?: Enrol
-    dateReplyTo?:number
-    editDateReplyTo?:number
-    chatIdReplyTo?:number
-    text?:string
+   data?:string
+   enrol?: Enrol
+   hint:{
+      date:number
+      editDate?:number
+      messageId:number
+      text:string
+   }
+   updatingData:{
+      text:string
+   }
+   shift():string | undefined
 //    val hasEdit:Boolean
     next(path: string, callbackScope: (scope:ReplyScope)=>void):ReplyScope
 }

@@ -1,4 +1,4 @@
-export type CustomReply = {
+export interface CustomReply  {
    start: string;
    groupBotAuthority: string;
    groupUserAuthority: string;

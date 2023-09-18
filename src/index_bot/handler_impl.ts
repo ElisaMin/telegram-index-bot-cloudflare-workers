@@ -202,19 +202,17 @@ namespace ContextImpl {
       constructor(
          base: BaseContext,
          public readonly data: string,
-         public readonly dateReplyTo: number,
-         public readonly editDateReplyTo: number|undefined,
-         public readonly chatIdReplyTo: number,
-         public readonly text: string,
+         public hint: { date: number; editDate?: number; messageId: number; text: string },
+         public updatingData: { text: string },
          public readonly index: number = 0,
          enrol?: Enrol,
       ) {
          super(base, data,index,enrol);
       }
-
       protected getNextContext(): ReplyScope {
-         return new Reply(this,this.data,this.dateReplyTo,this.editDateReplyTo,this.chatIdReplyTo,this.text,this.index+1)
+         return new Reply(this,this.data,this.hint,this.updatingData,this.index+1)
       }
+
    }
 
 }
@@ -321,7 +319,13 @@ class UpdateHandlerImpl implements UpdateHandler {
       if (!message.chat) throw new UnexpectedError("Chat is not set")
       if (!callback_query.data) throw new UnexpectedError("Data is not set")
 
-      const context = new ContextImpl.Callback(this.makeBaseContext(message.chat),callback_query.data,callback_query.message?.message_id??0,callback_query.id,message.chat.type)
+      const context = new ContextImpl.Callback(
+         this.makeBaseContext(message.chat),
+         callback_query.data,
+         callback_query.message?.message_id??0,
+         callback_query.id,
+         message.chat.type
+      )
 
       await context.checkEnrolInDatabase()
       this.context = context
@@ -333,7 +337,18 @@ class UpdateHandlerImpl implements UpdateHandler {
       if (!message.text) throw new UnexpectedError("Message text is not set")
 
       const replyToMessage = message.reply_to_message
-      const context = new ContextImpl.Reply(this.makeBaseContext(message.chat),awaitState.callback_data, replyToMessage.date, replyToMessage.edit_date, replyToMessage.chat.id, message.text)
+      const context = new ContextImpl.Reply(
+         this.makeBaseContext(message.chat),
+         awaitState.callback_data,
+         {
+            date:replyToMessage.date!,
+            editDate:replyToMessage.edit_date,
+            messageId:replyToMessage.message_id!,
+            text:replyToMessage.text!
+         },{
+            text:message.text
+         }
+      )
 
       await context.checkEnrolInDatabase()
       this.context = context
@@ -396,6 +411,10 @@ class UpdateHandlerImpl implements UpdateHandler {
       //TODO
       TODO()
    }
+   // anyways(f: () => void): UpdateHandler {
+   //    f()
+   //    return this
+   // }
 }
 
 class ChatSelectorImpl<S extends BaseContext> implements ChatSelector<S>{

@@ -2,18 +2,27 @@ import { BotConfig } from './bot/types';
 import { handle } from './bot/request';
 
 declare global {
-
+	interface Array<T> {
+		chunk(size:2):T[][]
+	}
 	export interface Object {
 		transform<T, R>(block: (obj: T) => R): R;
 	}
 	export interface String {
 		empty(): boolean
 		blank(): boolean
+		tags(): string[]
 	}
 	let bots: BotConfig[]|undefined;
 }
 
-
+//set chunk to array
+Array.prototype.chunk = function<T>(this:T[],size:number):T[][] {
+	return Array.from(
+		{ length: Math.ceil(this.length / size) },
+		(v, i) => this.slice(i * size, i * size + size)
+	);
+}
 Object.prototype.transform = function<T, R>(this: T, block: (obj: T) => R): R {
 	return block(this);
 };
@@ -22,6 +31,14 @@ String.prototype.empty = function(this: string): boolean {
 }
 String.prototype.blank = function(this: string): boolean {
 	return this.trim().empty();
+}
+String.prototype.tags = function(this: string): string[] {
+	return this
+		.split(" ")
+		.filter((s) => s.startsWith("#"))
+		.map(s => s
+			.replace(/[^a-zA-Z0-9_]/g, "_")
+		)
 }
 export class UnexpectedError extends Error {
 	constructor(message: string) {
@@ -64,7 +81,7 @@ export default {
 export function emptyResponse() {
 	return new Response('',{status:500})
 }
-
+//TODO: remove this
 export function TODO():never {
 	throw new NotImplementedException("TODO")
 }
@@ -72,5 +89,12 @@ class NotImplementedException extends Error {
 	constructor(message: string = "Not implemented") {
 		super(message);
 		this.name = "NotImplementedException";
+	}
+}
+export function unnecessary<T>(f:()=>T):T|undefined {
+	try {
+		return f()
+	} catch (e) {
+		console.error(e)
 	}
 }
