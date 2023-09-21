@@ -1,11 +1,91 @@
-import { ActorType, ReplyForUpdateContext, UpdateHandler } from '../../contexts_type';
-import { TODO, UnexpectedError, unnecessary } from '../../../worker';
-import { ReplyMarkup } from '../../../telegram/types';
-import { CallbackReply, renewEnrolEditingMessage } from './msg_builder_cb';
-import { TempEnrol } from '../../../db/types';
+import { ActorType, ReplyForUpdateContext, UpdateHandler } from '../contexts_type';
+import { TODO, UnexpectedError, unnecessary } from '../../worker';
+import { ReplyMarkup } from '../../telegram/types';
+import { buildMineResult, buildSearchResult, CallbackReply, renewEnrolEditingMessage } from './msg_builder_cb';
+import { TempEnrol } from '../../db/types';
+import { search } from './search';
 
+/**
+ * Represents a bot router that handles update events and routes them to the appropriate handler.
+ * @param {UpdateHandler} handler - The update handler function.
+ * @returns {UpdateHandler} - The update handler function.
+ */
+export const botRouter = (handler:UpdateHandler): UpdateHandler => handler
+   .answerCallback(callback_keys.searchResult, _=>_.anyways(async ({ messageId,shift,dao,chatId,actor,api }) => {
+      const uuid = shift()
+      if (!uuid) throw new UnexpectedError(`uuid not found`)
+      const enrol = await dao.findRecordByUUID(uuid)
+      if (!enrol) throw new UnexpectedError(`enrol not found ${uuid}`)
+      //todo: check if the enrol is for this chat
+      const isForReviewers = actor == ActorType.Reviewer
+      const isEditing = enrol.creator_chat_id == chatId
 
-export const handleCallbackQuery = (handler:UpdateHandler) => handler
+      const msg = enrol.toMessage(isEditing,isForReviewers,true)
+      await api.editMessageText({
+         ...msg,
+         message_id: messageId,
+         chat_id: chatId,
+      })
+   }))
+   .onSearch(async ({dao,text,api,chatId,messageId,}) => {
+      const s:any = buildSearchResult( await search(dao,text,chatId))
+      s.reply_to_message_id = messageId
+      s.chat_id = chatId
+      await api.sendMessage(s)
+   })
+   /**
+    * 分页请求
+    */
+   .answerCallback(callback_keys.page, _=>_.multipleChats([],async ({shift,dao,replyMsg,messageId,api,chatId})=>{
+      const next = shift()
+      const page = shift()
+      if (isNaN(Number(page))) throw new UnexpectedError(`page is not a number ${page}`)
+      if (next == callback_keys.search) {
+            const send = {
+               ...buildSearchResult(await search(dao,replyMsg!.text!,chatId)),
+               reply_to_message_id: replyMsg!.messageId,
+               message_id: messageId,
+               chat_id: chatId
+            }
+         await api.editMessageText(send)
+      }
+   }))
+   //region commands
+   /**
+    * Bot的开始命令
+    */
+   .command("start", (c)=>c
+      .privateChat(async({api,chatId,customReply})=>{
+         await api.sendMessage({ chat_id: chatId, text: customReply.start })
+      })
+      .disableRest(ActorType.Private)
+   )
+   /**
+    * Bot的帮助命令
+    */
+   .command("help", (c)=>c
+      .privateChat(async({data,api,chatId,customReply})=>{
+         await api.sendMessage({ chat_id: chatId, text: customReply.helpPrivate })
+      })
+      .groupChat(async({data,api,chatId,customReply})=>{
+         await api.sendMessage({ chat_id: chatId, text: customReply.helpGroup })
+      })
+      .disableRest(ActorType.Group)
+   )
+
+   .command("mine", (c)=>c
+      .privateChat(async({api,chatId,customReply,dao,})=>{
+         await api.sendMessage({
+            ...buildMineResult(customReply,await dao.findRecordsBySubmitterChatId(chatId)),
+            chat_id: chatId,
+         })
+      })
+      .disableRest(ActorType.Private)
+   )
+   //endregion
+   /**
+    * 修改enrol请求
+    */
    .replyForUpdate(callback_keys.enrol, _=>_.anyways(async (c) => {
 
       let { api,chatId,dao,customReply,shift,enrol,data,hint,updatingData } = c
@@ -56,12 +136,6 @@ export const handleCallbackQuery = (handler:UpdateHandler) => handler
       //todo: delete await state
       await renewEnrolEditingMessage(c)
    }))
-
-   /**
-    * 分页请求
-    * todo
-    */
-   // .answerCallback(callback_keys.page, _=>_
    /**
     * 分组更新请求 直接更新
     * from button
@@ -151,6 +225,9 @@ export const callback_keys = {
 
    requestChange: "r",
    remove: "c",
+   search: "s",
+   //preview detail
+   searchResult:"d"
 }
 async function hasEditOrTimeout(c: ReplyForUpdateContext): Promise<boolean> {
    const { dao, chatId, hint } = c

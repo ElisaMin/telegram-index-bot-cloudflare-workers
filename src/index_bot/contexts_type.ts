@@ -1,5 +1,5 @@
 import { TelegramBotApi } from '../telegram/api';
-import { DatabaseAlisObject, Enrol } from '../db/types';
+import { DatabaseAlisObject, Enrol, RecordEnrol } from '../db/types';
 import { CustomReply } from './custom_reply';
 import { ChatType } from '../telegram/types';
 
@@ -13,11 +13,14 @@ export interface BaseContext {
    dao:DatabaseAlisObject
    customReply:CustomReply
 }
+
 export interface UpdateHandler {
    command(command:string,f:(c:ChatSelector<CommandContext>)=>ChatSelector<CommandContext>):UpdateHandler,
    replyForUpdate(first:string,f:(c:ChatSelector<ReplyForUpdateContext>)=>ChatSelector<ReplyForUpdateContext>):UpdateHandler,
    answerCallback(first:string, f:(c:ChatSelector<CallbackContext>)=>ChatSelector<CallbackContext>):UpdateHandler,
    onRejected(f:(c:ChatSelector<CommandContext>)=>ChatSelector<CommandContext>):UpdateHandler,
+   onSearch(f:( (c: BaseContext & {text:string,messageId:number})=>Promise<void>) ):UpdateHandler,
+   // x(f:(c:ChatSelector<XContext>)=>ChatSelector<XContext>):UpdateHandler,
    // anyways(f:()=>void):UpdateHandler,
 }
 
@@ -25,6 +28,9 @@ export interface CommandContext extends BaseContext {
   command:string
   data?:string
 }
+
+
+
 export interface ReplyForUpdateContext extends BaseContext,ReplyScope { }
 
 export interface CallbackContext extends BaseContext,CallbackScope {
@@ -51,6 +57,7 @@ export interface CallbackScope {
    overPath?:string
    next(path?: string, callbackScope?: (scope:CallbackScope)=>void):CallbackScope
    param():string | undefined
+   replyMsg?:{text:string,messageId:number}
 }
 export interface ReplyScope {
    data?:string

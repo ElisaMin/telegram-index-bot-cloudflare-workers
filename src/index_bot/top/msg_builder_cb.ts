@@ -1,11 +1,11 @@
-import { DatabaseAlisObject, Enrol, TempEnrol } from '../../../db/types';
-import { SendMessageLike, TelegramMessageBuilder } from '../../../utils/telegram_msg_builder';
+import { DatabaseAlisObject, Enrol, TempEnrol } from '../../db/types';
+import { SendMessageLike, TelegramMessageBuilder } from '../../utils/telegram_msg_builder';
 import { callback_keys } from './router';
-import { ReplyMarkup } from '../../../telegram/types';
-import { CustomReply } from '../../custom_reply';
-import { ActorType, CallbackContext } from '../../contexts_type';
-import { unnecessary, UnexpectedError } from '../../../worker';
-import { TelegramBotApi } from '../../../telegram/api';
+import { ChatType, ReplyMarkup } from '../../telegram/types';
+import { CustomReply } from '../custom_reply';
+import { ActorType, CallbackContext } from '../contexts_type';
+import { unnecessary, UnexpectedError } from '../../worker';
+import { TelegramBotApi } from '../../telegram/api';
 
 
 export const renewEnrolEditingMessage:(c: { api:TelegramBotApi,enrol?:Enrol,chatId:number,actor:ActorType,dao:DatabaseAlisObject}) => Promise<void> = async ({api,enrol,chatId,actor,dao}) => {
@@ -29,7 +29,7 @@ export namespace CallbackReply {
 }
 
 
-declare module '../../../db/types' {
+declare module '../../db/types' {
     interface Enrol {
         link:string
         /**
@@ -40,10 +40,12 @@ declare module '../../../db/types' {
          * @param reopen true if it's 回锅肉
          */
         toMessage(
-          reopen?:boolean,
-          editing?:boolean,
-          forReviewers?:boolean,
+           editing?:boolean,
+           forReviewers?:boolean,
+           reopen?:boolean,
         ):SendMessageLike;
+        searchTitle():string
+        icon():string
     }
 }
 //set getter to link
@@ -110,4 +112,63 @@ Enrol.prototype.toMessage = function (
    }
    func(builder)
    return builder.withMarkup(markup)
+}
+Enrol.prototype.icon = function(this:Enrol) {
+   switch (this.type) {
+      case "channel":
+         return "📢"
+      case "group":
+         return "👥"
+      case "bot":
+         return "🤖"
+      default:
+         throw new UnexpectedError(`unknown type ${this.type}`)
+   }
+}
+Enrol.prototype.searchTitle = function(this:Enrol) {
+   let title = `${this.icon()} ${this.title} | `
+   if ((this.members_count??0)>1) {
+      title += `${formatNumber(this.members_count??0)} | `
+   }
+   this.tags?.forEach(tag=>title+=`#${tag} `)
+   const limit = 47
+   title = title.slice(0,limit)
+   if (title.length<limit) title += " ".repeat(limit-title.length)
+   title += "…" //ellipsis
+   return title
+}
+
+
+export function buildSearchResult(enrols:Enrol[]) {
+   const builder = new TelegramMessageBuilder()
+   const inlineButtons = enrols.map((enrol,)=>{
+      return {
+         text:enrol.searchTitle(),
+         callback_data:`${callback_keys.searchResult}/${enrol.uuid}`
+      }
+   }).map((obj)=>[obj])
+   builder.line(`共${enrols.length}个结果`)
+   return builder.withMarkup({inline_keyboard:inlineButtons})
+}
+
+function formatNumber(value:number) {
+   for(const unit of ["","K","M"]) {
+      if (value<1000) return `${value}${unit}`
+      value /= 1000
+      //保留一个小数点
+      value = Math.round(value*10)/10
+   }
+   return "1000M+"
+}
+export function buildMineResult(cr:CustomReply,enrols:Enrol[]) {
+   const builder = new TelegramMessageBuilder()
+   if (enrols.isNotEmpty()) {
+      //todo
+      // builder.line(cr.mine)
+   } else {
+      //todo
+      // builder.line(cr.mineEmpty)
+   }
+   const buttons = enrols.map((enrol)=> [enrol.linkable_name])
+   return builder.withMarkup({keyboard:buttons,resize_keyboard:true})
 }

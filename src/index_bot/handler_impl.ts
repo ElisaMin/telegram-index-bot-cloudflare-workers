@@ -180,6 +180,10 @@ namespace ContextImpl {
          public readonly messageId: number,
          public readonly callbackId: string,
          public readonly chatType: ChatType,
+         public readonly replyMsg?:{
+            text:string
+            messageId:number
+         },
          public readonly index: number = 0,
          enrol?: Enrol,
       ) {
@@ -195,7 +199,7 @@ namespace ContextImpl {
          return this._nextPath.split("?")[1]
       }
       protected getNextContext() {
-         return new Callback(this,this.data,this.messageId,this.callbackId,this.chatType,this.index+1)
+         return new Callback(this,this.data,this.messageId,this.callbackId,this.chatType,this.replyMsg,this.index+1)
       }
    }
    export class Reply extends PathContext<ReplyScope> implements ReplyForUpdateContext {
@@ -258,6 +262,9 @@ class UpdateHandlerImpl implements UpdateHandler {
          } else {
             await this.makeCommandContext(message)
          }
+         if (!this.context) {
+            await this.makeSearchContext(message)
+         }
 
       }
 
@@ -319,12 +326,21 @@ class UpdateHandlerImpl implements UpdateHandler {
       if (!message.chat) throw new UnexpectedError("Chat is not set")
       if (!callback_query.data) throw new UnexpectedError("Data is not set")
 
+      let replyMsg
+      if (message.reply_to_message) {
+         replyMsg = {
+            text:message.reply_to_message.text!,
+            messageId:message.reply_to_message.message_id
+         }
+      }
+
       const context = new ContextImpl.Callback(
          this.makeBaseContext(message.chat),
          callback_query.data,
          callback_query.message?.message_id??0,
          callback_query.id,
-         message.chat.type
+         message.chat.type,
+         replyMsg
       )
 
       await context.checkEnrolInDatabase()
@@ -357,6 +373,17 @@ class UpdateHandlerImpl implements UpdateHandler {
 
    private makeRejectContext() {
       this.context = new RejectedContextImpl()
+   }
+
+   private async makeSearchContext(message: Message) {
+      if (this.context) return
+      if (!message.text) throw new UnexpectedError("Message text is not set")
+      const c:any = {
+         ...this.makeBaseContext(message.chat)
+      }
+      c.name = "search"
+      c.text = message.text
+      this.context = c
    }
    //endregion
 
@@ -411,6 +438,14 @@ class UpdateHandlerImpl implements UpdateHandler {
       //TODO
       TODO()
    }
+   onSearch(f: (c: (BaseContext & { text: string,messageId:number })) => Promise<void>): UpdateHandler {
+      if (!this.final && (<any|undefined>this.context)?.name == "search") {
+         const context:any = this.context
+         this.final = async ()=> { await f(context) }
+      }
+      return this;
+   }
+
    // anyways(f: () => void): UpdateHandler {
    //    f()
    //    return this

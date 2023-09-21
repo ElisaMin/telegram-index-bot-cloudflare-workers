@@ -4,6 +4,7 @@ import { handle } from './bot/request';
 declare global {
 	interface Array<T> {
 		chunk(size:2):T[][]
+		isNotEmpty():boolean
 	}
 	export interface Object {
 		transform<T, R>(block: (obj: T) => R): R;
@@ -14,6 +15,7 @@ declare global {
 		tags(): string[]
 	}
 	let bots: BotConfig[]|undefined;
+
 }
 
 //set chunk to array
@@ -39,6 +41,9 @@ String.prototype.tags = function(this: string): string[] {
 		.map(s => s
 			.replace(/[^a-zA-Z0-9_]/g, "_")
 		)
+}
+Array.prototype.isNotEmpty = function<T>(this:T[]):boolean {
+	return this.length != 0
 }
 export class UnexpectedError extends Error {
 	constructor(message: string) {

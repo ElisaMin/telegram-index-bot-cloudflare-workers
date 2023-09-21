@@ -6,7 +6,7 @@ export abstract class Enrol implements EnrolRaw {
     linkable_name: string; //@xxx but @
     //base information of a telegram chat
     chat_id?: number;
-    type: ChatType;
+    type: "channel"| "group" | "bot";
     title: string;
     //information of a record
     tags?: string[]; //包含`#`
@@ -85,7 +85,7 @@ export interface EnrolRaw {
     linkable_name: string; //@xxx but @
     //base information of a telegram chat
     chat_id?: number;
-    type: ChatType;
+    type: "channel"| "group" | "bot";
     title: string;
     //information of a record
     tags?: string[]; //包含`#`
@@ -118,23 +118,36 @@ export interface DatabaseAlisObject {
     updateAwaitTimeout(chatId: number, noticeMsgId: number): Promise<void>;
     findEnrolByUUID(uuid: string): Promise<Enrol|undefined>;
     categories(): Promise<string[]>;
-    getTimeout(chatId: number | null, messageId: number): Promise<number | null>;
+    getTimeout(chatId: number | undefined, messageId: number): Promise<number | undefined>;
     updateEnrol(enrol: Enrol): Promise<void>;
-    searchEnrolsByKeyword(keyword: string): Promise<Enrols | null>;
-    searchEnrolsByTag(it: string[]): Promise<Enrols | null>;
-    searchEnrolsByCategory(keyword: string): Promise<Enrols | null>;
+    searchEnrolsByKeyword(keyword: string): Promise<Enrols | undefined>;
+    searchEnrolsByTag(it: string[]): Promise<Enrols | undefined>;
+    searchEnrolsByCategory(keyword: string): Promise<Enrols | undefined>;
     // score(): number;
-    getAwaitStatus(chatId: number): Promise<AwaitInfo | null>;
+    getAwaitStatus(chatId: number): Promise<AwaitInfo | undefined>;
     checkCategory(next: string): Promise<Boolean>;
 
     updateCategory(uuid: string, next: string): Promise<boolean>;
     getTempEnrol(uuid: string): Promise<TempEnrol | undefined>;
     updateEnrolLastMessageId(uuid: string, message_id: number): Promise<void>;
     renewTimeout(): Promise<void>;
+    findRecordsBySubmitterChatId(creator_chat_id: number): Promise<Enrols>;
+
+    saveOrGetSearchRequest(text: string, chatId: number, page: number): Promise<SearchRequest>;
+
+    searchRecordByCategory(category: string): Promise<RecordEnrol[]>;
+    searchRecordByTagCross(tags: any): Promise<RecordEnrol[]>;
+    searchRecordByTitle(keywords: string[]): Promise<RecordEnrol[]>;
+    searchRecordByDescription(keywords: string[]): Promise<RecordEnrol[]>;
+    searchRecordByTag(keywords: string[]): Promise<RecordEnrol[]>;
+    findRecordByUUID(uuid: string): Promise<RecordEnrol | undefined>;
 }
 export interface AwaitInfo {
     chat_id: number
     message_id: number
     callback_data: string
     timeout?: number
+}
+type SearchRequest = {
+    //todo
 }
