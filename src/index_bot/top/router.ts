@@ -1,4 +1,4 @@
-import { ActorType, ReplyForUpdateContext, UpdateHandler } from '../contexts_type';
+import { ActorType, ReplyForUpdateContext, ContextHandler } from '../contexts_type';
 import { TODO, UnexpectedError, unnecessary } from '../../worker';
 import { ReplyMarkup } from '../../telegram/types';
 import { buildMineResult, buildSearchResult, CallbackReply, renewEnrolEditingMessage } from './msg_builder_cb';
@@ -7,10 +7,10 @@ import { search } from './search';
 
 /**
  * Represents a bot router that handles update events and routes them to the appropriate handler.
- * @param {UpdateHandler} handler - The update handler function.
- * @returns {UpdateHandler} - The update handler function.
+ * @param {ContextHandler} handler - The update handler function.
+ * @returns {ContextHandler} - The update handler function.
  */
-export const botRouter = (handler:UpdateHandler): UpdateHandler => handler
+export const botRouter = (handler:ContextHandler): ContextHandler => handler
    .answerCallback(callback_keys.searchResult, _=>_.anyways(async ({ messageId,shift,dao,chatId,actor,api }) => {
       const uuid = shift()
       if (!uuid) throw new UnexpectedError(`uuid not found`)

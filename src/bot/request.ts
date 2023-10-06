@@ -1,19 +1,19 @@
 import { emptyResponse, Env, TODO } from '../worker';
 import { BotConfig } from './types';
 import { getCustomReply } from '../index_bot/custom_reply';
-import { Handler } from '../index_bot/handler_impl';
+import { RouterHelper } from '../index_bot/handler_impl';
 import { TelegramBotApi } from '../telegram/api';
 import { DatabaseAlisObject } from '../db/types';
+import { botRouter } from '../index_bot/top/router';
 
 async function startByBot(bot:BotConfig,body:any):Promise<Response> {
   bot.customReply = getCustomReply(bot.customReply)
   const api = new TelegramBotApi("https://api.telegram.org/bot"+bot.token)
   //todo
   let dao: () => DatabaseAlisObject = TODO
-  await Handler.init(body,api,dao(),bot)
-  await Handler.collect()
-  await Handler.invoke()
-  return new Response(JSON.stringify({ok:true}),{status:200})
+  await RouterHelper.generateContext(body,api,dao(),bot)
+  await RouterHelper.invoke(botRouter)
+  return new Response(JSON.stringify({ok:true}))
 }
 
 export async function handle(request:Request,env:Env):Promise<Response> {

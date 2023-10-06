@@ -14,14 +14,15 @@ export interface BaseContext {
    customReply:CustomReply
 }
 
-export interface UpdateHandler {
-   command(command:string,f:(c:ChatSelector<CommandContext>)=>ChatSelector<CommandContext>):UpdateHandler,
-   replyForUpdate(first:string,f:(c:ChatSelector<ReplyForUpdateContext>)=>ChatSelector<ReplyForUpdateContext>):UpdateHandler,
-   answerCallback(first:string, f:(c:ChatSelector<CallbackContext>)=>ChatSelector<CallbackContext>):UpdateHandler,
-   onRejected(f:(c:ChatSelector<CommandContext>)=>ChatSelector<CommandContext>):UpdateHandler,
-   onSearch(f:( (c: BaseContext & {text:string,messageId:number})=>Promise<void>) ):UpdateHandler,
-   // x(f:(c:ChatSelector<XContext>)=>ChatSelector<XContext>):UpdateHandler,
-   // anyways(f:()=>void):UpdateHandler,
+export interface ContextHandler {
+   command(command:string,f:(c:ChatSelector<CommandContext>)=>ChatSelector<CommandContext>):ContextHandler,
+   replyForUpdate(first:string,f:(c:ChatSelector<ReplyForUpdateContext>)=>ChatSelector<ReplyForUpdateContext>):ContextHandler,
+   answerCallback(first:string, f:(c:ChatSelector<CallbackContext>)=>ChatSelector<CallbackContext>):ContextHandler,
+   onRejected(f:(c:ChatSelector<CommandContext>)=>ChatSelector<CommandContext>):ContextHandler,
+   onSearch  (f:((c:BaseContext & {text:string,messageId:number})=>Promise<void>) ):ContextHandler,
+   onDisabled(f:(c:BaseContext & {only?:ActorType })=>Promise<void>):ContextHandler,
+   // x(f:(c:ChatSelector<XContext>)=>ChatSelector<XContext>):ContextHandler,
+   // anyways(f:()=>void):ContextHandler,
 }
 
 export interface CommandContext extends BaseContext {

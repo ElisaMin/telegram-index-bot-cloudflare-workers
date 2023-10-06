@@ -5,29 +5,25 @@ import {
    ChatSelector,
    CommandContext,
    ReplyForUpdateContext, ReplyScope,
-   UpdateHandler
+   ContextHandler
 } from './contexts_type';
-import { CallbackQuery, Chat, ChatType, Message, Update } from '../telegram/types';
+import { ChatType, Update } from '../telegram/types';
 import { ParseMode, TelegramBotApi } from '../telegram/api';
-import { AwaitInfo, DatabaseAlisObject, Enrol } from '../db/types';
+import { DatabaseAlisObject, Enrol } from '../db/types';
 import { Rejecting } from '../db/ban';
-import { TODO, UnexpectedError } from '../worker';
+import { UnexpectedError } from '../worker';
 import { BotConfig } from '../bot/types';
 import { CustomReply } from './custom_reply';
 
-export namespace Handler {
 
-   let handler: UpdateHandler | undefined = undefined;
+
+export namespace RouterHelper {
+
+   let context:BaseContext
    let toDev: (_?: string, __?: Error) => Promise<void> = async (_?:string, __?:Error)=>{
       throw new UnexpectedError("Dev chat id is not set")
    }
-
-   export async function init(update: Update, api: TelegramBotApi, dao: DatabaseAlisObject, botConfig: BotConfig) {
-      if (!handler) {
-         const _handler = new UpdateHandlerImpl(update,api,dao,botConfig)
-         await _handler.task
-         handler = _handler
-      }
+   export async function generateContext(update: Update, api: TelegramBotApi, dao: DatabaseAlisObject, botConfig: BotConfig) {
       toDev = async (s?:string,e?:Error)=>{
          let chatId = botConfig.devChatId ?? botConfig.reviewerChatId
          if (!chatId) throw new UnexpectedError("Dev chat id is not set")
@@ -51,29 +47,22 @@ export namespace Handler {
             console.error(text)
          }
       }
-   }
-
-   export async function use(f:(handler:UpdateHandler)=>UpdateHandler) {
-      if (!handler) throw new UnexpectedError("Handler is not set")
-      handler = f(handler)
-   }
-   export async function collect() {
-      TODO()
-   }
-
-   export async function invoke() {
       try {
-         if (!handler||handler !instanceof UpdateHandlerImpl) {
-            // noinspection ExceptionCaughtLocallyJS
-            throw new UnexpectedError("Handler is not set")
+         context = await ContextImpl.getContext(update,botConfig,dao,api)
+      } catch (e) {
+         if (e instanceof  UnexpectedError) {
+            await toDev(e.message,e)
+         } else {
+            console.error(e)
+            await toDev("Unknown error",e as Error)
          }
-         const _handler = <UpdateHandlerImpl> handler
-         if (!_handler.final) {
-            // noinspection ExceptionCaughtLocallyJS
-            throw new UnexpectedError("Handler is not set")
-         }
-         await _handler.final();
+      }
 
+   }
+
+   export async function invoke(use:(ch:ContextHandler)=>ContextHandler) {
+      try {
+         if (context) await ContextImpl.useContext(context, use)()
       } catch (e) {
          if (e instanceof  UnexpectedError) {
             await toDev(e.message,e)
@@ -111,7 +100,7 @@ namespace ContextImpl {
    /**
     * CommandContext Implementation
     */
-   export class Command extends AbstractContext implements CommandContext {
+   class Command extends AbstractContext implements CommandContext {
       constructor(
          base: BaseContext,
          public command: string,
@@ -120,6 +109,7 @@ namespace ContextImpl {
          super(base);
       }
    }
+   // noinspection JSUnusedGlobalSymbols
    abstract class PathContext <S> extends AbstractContext {
       protected readonly paths: string[]
       private readonly uuid?:string
@@ -142,16 +132,10 @@ namespace ContextImpl {
          if (enrol)
             this.enrol = enrol
       }
-      async checkEnrolInDatabase() {
-         if (this.enrol) return this.enrol
-         const uuid = this.uuid
-         if (!uuid) return undefined
-         this.enrol = await this.dao.findEnrolByUUID(uuid)
-         return this.enrol
-      }
       get afterPath() {
          return this.paths[this.index]
       }
+
       get overPath() {
          return this.paths[this.index+1]
       }
@@ -173,7 +157,7 @@ namespace ContextImpl {
    /**
     * Callback Implementation
     */
-   export class Callback extends PathContext<CallbackScope> implements CallbackContext {
+   class Callback extends PathContext<CallbackScope> implements CallbackContext {
       constructor(
          base: BaseContext,
          public readonly data: string,
@@ -202,7 +186,7 @@ namespace ContextImpl {
          return new Callback(this,this.data,this.messageId,this.callbackId,this.chatType,this.replyMsg,this.index+1)
       }
    }
-   export class Reply extends PathContext<ReplyScope> implements ReplyForUpdateContext {
+   class Reply extends PathContext<ReplyScope> implements ReplyForUpdateContext {
       constructor(
          base: BaseContext,
          public readonly data: string,
@@ -219,66 +203,26 @@ namespace ContextImpl {
 
    }
 
-}
 
-
-class UpdateHandlerImpl implements UpdateHandler {
-   private context:BaseContext|undefined
-   task?:Promise<void>
-   constructor(
-      protected update:Update,
-      private api:TelegramBotApi,
-      private dao:DatabaseAlisObject,
-      private botConfig:BotConfig,
-   ) { this.task = (async ()=>{
-      let getme = api.getMe()
-
-      if (false) {
-         throw new UnexpectedError("Unreachable")
-      }
-
-      else if (update.callback_query) {
-
-         if (await Rejecting.checkDeserving(<number>update.callback_query.message?.chat?.id)) {
-            this.makeRejectContext()
-            return
-         }
-
-         await this.makeCallbackContext(update.callback_query)
-
-      }
-
-      else if (update.message&&update.message.from) {
-
-         if (await Rejecting.checkDeserving(update.message.chat.id)) {
-            this.makeRejectContext()
-            return
-         }
-
-         const message = update.message
-         const awaitState = await this.dao.getAwaitStatus(message.chat.id)
-         if (awaitState && awaitState.chat_id == message.chat.id && message.reply_to_message && message.reply_to_message.message_id == awaitState.message_id ) {
-            await this.makeReplyContext(awaitState,message)
-         } else {
-            await this.makeCommandContext(message)
-         }
-         if (!this.context) {
-            await this.makeSearchContext(message)
-         }
-
-      }
-
-      else {
-         // do nothing
-      }
-
-      await getme
-
-   })() }
-
-   private makeBaseContext(chat:Chat):BaseContext {
-      if (!this.botConfig.customReply) throw new UnexpectedError("Custom reply is not set")
+   /**
+    * Returns the base context for the given update, bot configuration, database alis object, and Telegram Bot API.
+    *
+    * @param {Update} update - The update object received from the Telegram API.
+    * @param {BotConfig} botConfig - The bot configuration object.
+    * @param {DatabaseAlisObject} dao - The database alis object for accessing the database.
+    * @param {TelegramBotApi} api - The Telegram Bot API object for interacting with the Telegram API.
+    *
+    * @throws {UnexpectedError} If the chat is not set or custom reply is not set.
+    * @throws {UnexpectedError} If the channel is not supported or the chat type is unknown.
+    *
+    * @returns {BaseContext} The base context object containing the actor type, chat ID, dao, isForReviewers flag, API, and custom reply.
+    */
+   function getBaseContext(update:Update,botConfig:BotConfig,dao:DatabaseAlisObject,api:TelegramBotApi):BaseContext {
+      const chat = update?.callback_query?.message?.chat || update?.message?.chat
+      if (!chat) throw new UnexpectedError("Chat is not set")
+      if (!botConfig.customReply) throw new UnexpectedError("Custom reply is not set")
       let actor
+
       switch (chat.type) {
          case ChatType.channel:
             throw new UnexpectedError("Channel is not supported")
@@ -287,272 +231,215 @@ class UpdateHandlerImpl implements UpdateHandler {
             break
          case ChatType.group:
          case ChatType.supergroup:
-            if (chat.id == this.botConfig.reviewerChatId) {
+            if (chat.id == botConfig.reviewerChatId) {
                actor = ActorType.Reviewer
             } else {
                actor = ActorType.Group
             }
+         default:
+            throw new UnexpectedError("Unknown chat type")
       }
       return {
-         actor: actor, chatId: chat.id, dao: this.dao,
+         actor: actor, chatId: chat.id, dao: dao,
          isForReviewers: actor == ActorType.Reviewer,
-         api: this.api,customReply:this.botConfig.customReply
+         api: api,customReply:botConfig.customReply
       }
    }
-
-   //region make context
-   private async makeCommandContext(message: Message) {
-      if (this.context) return
-      const me = await this.api.getMe()
-      if(!me.username) {
-         throw new UnexpectedError("Bot username is not set")
+   /**
+    * Generates the next context for the given base context and update.
+    * ```text
+    * update?.
+    *    callback_query -> {
+    *       data:
+    *          - enrol/{curd}/more#{uuid|@linkable}
+    *    }
+    *    message -> {
+    *       reply_to_message
+    *          - db.getAwaits()? -> reply context
+    *       text:
+    *          - /{command}?@{me} {data} -> command context
+    *          - {text} -> search context
+    *     }
+    * ```
+    */
+   async function generateNextContext(base:BaseContext,update: Update): Promise<BaseContext> {
+      const reject = await Rejecting.getRejectContext(base)
+      let context
+      //reject
+      if (reject) {
+         (reject as any).name = "reject"
+         return reject
       }
-      //regex : ^/([a-zA-Z0-9_]+)(?:@([a-zA-Z0-9_]+))?(?:\s+([\s\S]+))?$
-      const match = message.text?.match(new RegExp(
-         `^\/([a-zA-Z0-9_]+)(?:@${me.username})?(?:\\s+([\\s\\S]+))?$`)
-      )
-      if (match) {
-         const command:string = match[1]
-         const data:string|undefined = match[2]
-         this.context = new ContextImpl.Command(this.makeBaseContext(message.chat),command,data)
-      }
-   }
+      //callback
+      else if (update.callback_query) {
+         let callback_query = update.callback_query
+         const message = callback_query.message
 
-   private async makeCallbackContext(callback_query: CallbackQuery) {
-      if (this.context) return
-      const message = callback_query.message
+         if (!message) throw new UnexpectedError("Message is not set")
+         if (!message.chat) throw new UnexpectedError("Chat is not set")
+         if (!callback_query.data) throw new UnexpectedError("Data is not set")
 
-      if (!message) throw new UnexpectedError("Message is not set")
-      if (!message.chat) throw new UnexpectedError("Chat is not set")
-      if (!callback_query.data) throw new UnexpectedError("Data is not set")
-
-      let replyMsg
-      if (message.reply_to_message) {
-         replyMsg = {
-            text:message.reply_to_message.text!,
-            messageId:message.reply_to_message.message_id
+         let replyMsg
+         if (message.reply_to_message) {
+            replyMsg = {
+               text:message.reply_to_message.text!,
+               messageId:message.reply_to_message.message_id
+            }
          }
+         context = new Callback(
+            base,
+            callback_query.data,
+            callback_query.message?.message_id??0,
+            callback_query.id,
+            message.chat.type,
+            replyMsg
+         )
       }
-
-      const context = new ContextImpl.Callback(
-         this.makeBaseContext(message.chat),
-         callback_query.data,
-         callback_query.message?.message_id??0,
-         callback_query.id,
-         message.chat.type,
-         replyMsg
-      )
-
-      await context.checkEnrolInDatabase()
-      this.context = context
-   }
-   private async makeReplyContext(awaitState:AwaitInfo,message:Message) {
-      if (this.context) return
-
-      if (!message.reply_to_message) throw new UnexpectedError("Reply to message is not set")
-      if (!message.text) throw new UnexpectedError("Message text is not set")
-
-      const replyToMessage = message.reply_to_message
-      const context = new ContextImpl.Reply(
-         this.makeBaseContext(message.chat),
-         awaitState.callback_data,
-         {
-            date:replyToMessage.date!,
-            editDate:replyToMessage.edit_date,
-            messageId:replyToMessage.message_id!,
-            text:replyToMessage.text!
-         },{
-            text:message.text
+      if (!context && update.message && update.message.from) {
+         const message = update.message
+         if (!message.text) throw new UnexpectedError("Message text is not set")
+         const text = message.text.trim()
+         if (text.empty()) {
+            throw new UnexpectedError("Message text is empty")
          }
-      )
+         const callbackInfo = await base.dao.getAwaitStatus(message.chat.id)
 
-      await context.checkEnrolInDatabase()
-      this.context = context
-
-   }
-
-   private makeRejectContext() {
-      this.context = new RejectedContextImpl()
-   }
-
-   private async makeSearchContext(message: Message) {
-      if (this.context) return
-      if (!message.text) throw new UnexpectedError("Message text is not set")
-      const c:any = {
-         ...this.makeBaseContext(message.chat)
-      }
-      c.name = "search"
-      c.text = message.text
-      this.context = c
-   }
-   //endregion
-
-   final?:()=>Promise<void>
-
-   answerCallback(first: string, f: (c: ChatSelector<CallbackContext>) => ChatSelector<CallbackContext>): UpdateHandler {
-      if (!this.final && this.context instanceof ContextImpl.Callback) {
-         if (first == this.context.afterPath) {
-            const selector = new ChatSelectorImpl<CallbackContext>(this.context.actor)
-            f(selector)
-            const context = this.context
-            const invokable = selector.invoke()
-            this.final = async ()=>{
-               await invokable(context)
+         if (callbackInfo && callbackInfo.chat_id == message.chat.id && message.reply_to_message && message.reply_to_message.message_id == callbackInfo.message_id ) {
+            const replyToMessage = message.reply_to_message
+            context = new Reply(
+               base,
+               callbackInfo.callback_data,
+               {
+                  date:replyToMessage.date!,
+                  editDate:replyToMessage.edit_date,
+                  messageId:replyToMessage.message_id!,
+                  text:replyToMessage.text!
+               },{
+                  text:text
+               }
+            )
+         }
+         if (!context)  {
+            const username = (await base.api.getMe()).username
+            if(! username) {
+               throw new UnexpectedError("Bot username is not set")
+            }
+            //regex : ^/([a-zA-Z0-9_]+)(?:@([a-zA-Z0-9_]+))?(?:\s+([\s\S]+))?$
+            const match = text.match(new RegExp(
+               `^\/([a-zA-Z0-9_]+)(?:@${username})?(?:\\s+([\\s\\S]+))?$`)
+            )
+            if (match) {
+               const command:string = match[1]
+               const data:string|undefined = match[2]
+               if ((command.length??0)>2)
+               context = new Command(base,command,data)
+            } else {
+               let c:any = base
+               c.name = "search"
+               c.text = text
+               if (c.text.startsWith(`@${username}`)) {
+                  c.text = c.text.substring(username.length+1)
+               }
+               context = c
             }
          }
       }
-      return this;
-   }
-
-   command(command: string, f: (c: ChatSelector<CommandContext>) => ChatSelector<CommandContext>): UpdateHandler {
-       if (!this.final && this.context instanceof ContextImpl.Command) {
-         if (command == this.context.command) {
-            const selector = new ChatSelectorImpl<CommandContext>(this.context.actor)
-            f(selector)
-            const context = this.context
-            const invokable = selector.invoke()
-            this.final = async ()=>{
-               await invokable(context)
-            }
+      if (!context) {
+         throw new UnexpectedError("context not defined")
+      }
+      if (context.uuid) {
+         let key:string = context.uuid
+         if (key.startsWith("@")) {
+            key = key.substring(1)
+            context.enrol = await context.dao.findEnrolByLinkableName(key)
+         } else {
+            context.enrol = await context.dao.findEnrolByUUID(context.uuid)
          }
       }
-      return this;
+      return context
+   }
+   function getCondition(of:BaseContext) {
+       if (of instanceof PathContext) {
+         return (first: string)=>first == of.afterPath
+      } else if (of instanceof Command) {
+         return (first: string)=>first == of.command
+      } else return ()=>false
    }
 
-   replyForUpdate(first: string, f: (c: ChatSelector<ReplyForUpdateContext>) => ChatSelector<ReplyForUpdateContext>): UpdateHandler {
-      if (!this.final && this.context instanceof ContextImpl.Reply) {
-         if (first == this.context.afterPath) {
-            const selector = new ChatSelectorImpl<ReplyForUpdateContext>(this.context.actor)
-            f(selector)
-            const context = this.context
-            const invokable = selector.invoke()
-            this.final = async ()=>{
-              await invokable(context)
-            }
+   export function useContext(context:BaseContext,use:(h:ContextHandler)=>ContextHandler) {
+      const condition = getCondition(context)
+      let selected: any = undefined
+      const byNamed = (named:string) => function(this:ContextHandler, f:any):ContextHandler{
+         if (!selected && f.name == named) {
+            selected = f
          }
+         return this
       }
-      return this;
-   }
-
-   onRejected(f: (c: ChatSelector<CommandContext>) => ChatSelector<CommandContext>): UpdateHandler {
-      //TODO
-      TODO()
-   }
-   onSearch(f: (c: (BaseContext & { text: string,messageId:number })) => Promise<void>): UpdateHandler {
-      if (!this.final && (<any|undefined>this.context)?.name == "search") {
-         const context:any = this.context
-         this.final = async ()=> { await f(context) }
-      }
-      return this;
-   }
-
-   // anyways(f: () => void): UpdateHandler {
-   //    f()
-   //    return this
-   // }
-}
-
-class ChatSelectorImpl<S extends BaseContext> implements ChatSelector<S>{
-   protected chain:Array<(context:S)=>Promise<unknown>> = []
-   private addedTypes = new Set<ActorType>()
-   constructor(protected typeSelecting:ActorType,) {}
-
-   private selecting(type:ActorType,f:(context:S)=>Promise<unknown>) {
-      if (type == this.typeSelecting) {
-         this.chain.push(f)
-      }
-      this.addedTypes.add(type)
-      return this
-   }
-   privateChat(f:(context:S)=>Promise<unknown>):ChatSelector<S>{
-      this.selecting(ActorType.Private,f)
-      return this
-   }
-   groupChat(f:(context:S)=>Promise<unknown>):ChatSelector<S> {
-      this.selecting(ActorType.Group,f)
-      return this
-   }
-   reviewerChat(f:(context:S)=>Promise<unknown>):ChatSelector<S> {
-      this.selecting(ActorType.Reviewer,f)
-      return this
-   }
-   anyways(f:(context:S)=>Promise<unknown>):ChatSelector<S> {
-      this.chain.push(f)
-      return this
-   }
-   multipleChats(not:ActorType[],f:(context:S)=>Promise<unknown>):ChatSelector<S>  {
-      [ActorType.Private, ActorType.Group, ActorType.Reviewer]
-
-         .filter((type)=> !not.includes(type))
-
-         .forEach(t=>this.selecting(t,f))
-
-      return this
-   }
-   disableRest(only?:ActorType):ChatSelector<S>  {
-      if (!this.addedTypes.has(this.typeSelecting)) {
-         let key:string|undefined
-         switch (only) {
-            case ActorType.Reviewer:
-            case undefined:
-               key = "disable"
-               break
-            case ActorType.Private:
-               key = "onlyPrivate"
-               break
-            case ActorType.Group:
-               key = "onlyGroup"
-               break
-            default:
-               throw new UnexpectedError("Unknown actor type")
+      const byCondition = function(this:ContextHandler, header:string, f:any):ContextHandler{
+         if (!selected && condition(header)) {
+            selected = f
          }
-         this.chain.push(async (context:S)=> {
-            if (!key ) throw new UnexpectedError("cant find key of disabling")
-            const message = (<any>context.customReply)[key]
-            if (!message) throw new UnexpectedError("cant find message of disabling")
-            await context.api.sendMessage({
-               chat_id:context.chatId,
-               text:message,
+         return this
+      }
+      let onDisable: ((c: BaseContext & { only?: ActorType | undefined; }) => Promise<void>)
+      const impl:ContextHandler = {
+         onSearch  :byNamed("search"),
+         onRejected:byNamed("reject"),
+         onDisabled:(f)=> {
+            onDisable = f
+            return impl
+         },
+         replyForUpdate:byCondition,
+         command:byCondition,
+         answerCallback:byCondition
+      }
+      use(impl)
+      if (!selected) {
+         throw new UnexpectedError("out of range")
+      }
+      if ((<any>context).name == "search" ) {
+         return async () => {
+            await selected(context)
+         }
+      } else {
+         const map:{key:string,invokable:(c:BaseContext)=>Promise<unknown>}[] = []
+         let pushType = (type:ActorType|string) => function (this:ChatSelector<any>,f:any) {
+            map.push({key:type,invokable:f})
+            return this
+         }
+         const chatSelector:ChatSelector<BaseContext> = {
+            privateChat: pushType(ActorType.Private),
+            groupChat: pushType(ActorType.Group),
+            reviewerChat: pushType(ActorType.Reviewer),
+            anyways: pushType("anyways"),
+            otherwise: pushType("otherwise"),
+            multipleChats: (not:ActorType[]) => {
+               [ActorType.Private, ActorType.Group, ActorType.Reviewer].filter((type)=> !not.includes(type)).forEach(pushType)
+               return chatSelector
+            },
+            disableRest: (only?:ActorType) => chatSelector.otherwise(async (context:any) => {
+               context.only = only
+                await onDisable(context)
             })
-         })
-      }
-      return this
-   }
-   otherwise(f:(context:S)=>Promise<unknown>) {
-      if (!this.addedTypes.has(this.typeSelecting)) {
-         this.chain.push(f)
-      }
-      return this
-   }
-
-   invoke() {
-       return async (c:S) => {
-         for (const f of this.chain) {
-            await f(c);
          }
+         selected(chatSelector)
+         let finalList = map.filter(it=>it.key == context.actor || it.key == "anyways" || it.key == "otherwise")
+         if (finalList.find(it=>it.key == context.actor)) {
+            finalList.filter(it=>it.key != "otherwise")
+         }
+         if (finalList.length == 0 ) {
+            const ctx:any = context
+            throw new UnexpectedError(`select failed ${context.actor}, ${ ctx.name||typeof context} : ${ ctx.command || ctx.data || ctx.text}`)
+         }
+         return async () => {
+            for (const f of finalList) {
+               await f.invokable(context)
+            }
+         }
+
       }
    }
-
-}
-//TODO
-class RejectedContextImpl implements BaseContext {
-
-   get api(): TelegramBotApi {
-       throw new Error("Method not implemented.");
-   }
-   get chatId(): number {
-       throw new Error("Method not implemented.");
-   }
-   get dao(): DatabaseAlisObject {
-       throw new Error("Method not implemented.");
-   }
-   get isForReviewers(): boolean {
-       throw new Error("Method not implemented.");
-   }
-   get actor(): ActorType {
-      throw new Error("Method not implemented.");
-   }
-   get customReply(): CustomReply {
-      throw new Error("Method not implemented.");
+   export async function getContext(update:Update,botConfig:BotConfig,dao:DatabaseAlisObject,api:TelegramBotApi) {
+      return await generateNextContext(getBaseContext(update,botConfig,dao,api),update)
    }
 }
